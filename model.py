@@ -1,11 +1,13 @@
-"""
-Camouflaged Object Detection (COD) - Model Architecture & Loader
-Architecture: U-Net with ResNet34 Encoder (trained on COD10K-v3)
-"""
-
 import os
+import urllib.request
 import torch
 import segmentation_models_pytorch as smp
+
+# Default direct download URL from GitHub Release (or set via environment variable / secrets)
+DEFAULT_MODEL_URL = os.environ.get(
+    "MODEL_URL",
+    "https://github.com/MaheshBaja/camoflouge/releases/download/v1.0.0/best_model.pth"
+)
 
 
 def get_default_device() -> torch.device:
@@ -13,6 +15,37 @@ def get_default_device() -> torch.device:
     if torch.cuda.is_available():
         return torch.device("cuda")
     return torch.device("cpu")
+
+
+def download_checkpoint(url: str = DEFAULT_MODEL_URL, destination: str = "best_model.pth") -> str:
+    """Downloads model checkpoint from remote URL if not present locally."""
+    if os.path.exists(destination):
+        return destination
+
+    alt_path = "best_model_final_one.pth"
+    if os.path.exists(alt_path):
+        return alt_path
+
+    print(f"[*] Checkpoint not found locally. Downloading from {url}...")
+    try:
+        # Create request with browser User-Agent to avoid blocking
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        )
+        with urllib.request.urlopen(req) as response, open(destination, 'wb') as out_file:
+            data = response.read()
+            out_file.write(data)
+        print(f"[OK] Downloaded model weights to {destination}")
+        return destination
+    except Exception as e:
+        if os.path.exists(destination):
+            os.remove(destination)
+        raise FileNotFoundError(
+            f"Checkpoint file '{destination}' was not found locally, and automatic download failed: {e}.\n"
+            f"Please upload 'best_model.pth' to GitHub Releases (tag v1.0.0) at:\n"
+            f"https://github.com/MaheshBaja/camoflouge/releases/new"
+        ) from e
 
 
 def create_model() -> torch.nn.Module:
@@ -38,6 +71,7 @@ def load_model(checkpoint_path: str = "best_model.pth", device: torch.device = N
     Loads the trained model weights from the checkpoint.
     
     Handles:
+      - Automatic remote download if running in cloud/Streamlit Cloud
       - Missing file fallbacks (best_model.pth vs best_model_final_one.pth)
       - Checkpoint dict extraction (model_state_dict)
       - DataParallel state_dict prefix cleanup ('module.')
@@ -51,16 +85,8 @@ def load_model(checkpoint_path: str = "best_model.pth", device: torch.device = N
     if device is None:
         device = get_default_device()
 
-    # Fallback check if user or system provides alternate naming
-    if not os.path.exists(checkpoint_path):
-        alternate_path = "best_model_final_one.pth" if "best_model.pth" in checkpoint_path else "best_model.pth"
-        if os.path.exists(alternate_path):
-            checkpoint_path = alternate_path
-        else:
-            raise FileNotFoundError(
-                f"Checkpoint file not found at '{checkpoint_path}'. "
-                f"Please make sure 'best_model.pth' is in the project directory."
-            )
+    # Ensure checkpoint is available (checks local or downloads from release)
+    checkpoint_path = download_checkpoint(DEFAULT_MODEL_URL, checkpoint_path)
 
     model = create_model()
 
